@@ -10,15 +10,16 @@ import aiomysql
 def log(sql, args=()):
     logging.info('SQL: %s' % sql)
 
+#创建数据库连接池
 async def create_pool(loop, **kw):
     logging.info('create database connection pool...')
     global __pool
     __pool = await aiomysql.create_pool(
         host=kw.get('host', 'localhost'),
         port=kw.get('port', 3306),
-        user=kw['root'],
-        password=kw['123'],
-        db=kw['py_db'],
+        user=kw['user'],
+        password=kw['password'],
+        db=kw['db'],
         charset=kw.get('charset', 'utf8'),
         autocommit=kw.get('autocommit', True),
         maxsize=kw.get('maxsize', 10),
@@ -26,19 +27,21 @@ async def create_pool(loop, **kw):
         loop=loop
     )
 
+#执行select语句
 async def select(sql, args, size=None):
     log(sql, args)
     global __pool
     async with __pool.get() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:
-            await cur.execute(sql.replace('?', '%s'), args or ())
+            await cur.execute(sql.replace('?', '%s'), args or ()) #SQL语句的占位符是?，而MySQL的占位符是%s
             if size:
-                rs = await cur.fetchmany(size)
+                rs = await cur.fetchmany(size) #获取最多指定数量的记录
             else:
-                rs = await cur.fetchall()
+                rs = await cur.fetchall() #获取所有记录
         logging.info('rows returned: %s' % len(rs))
         return rs
 
+#执行sql语句
 async def execute(sql, args, autocommit=True):
     log(sql)
     async with __pool.get() as conn:
@@ -47,13 +50,15 @@ async def execute(sql, args, autocommit=True):
         try:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(sql.replace('?', '%s'), args)
-                affected = cur.rowcount
+                affected = cur.rowcount #返回结果数
             if not autocommit:
                 await conn.commit()
         except BaseException as e:
             if not autocommit:
                 await conn.rollback()
             raise
+        finally:
+            conn.close()
         return affected
 
 def create_args_string(num):
@@ -188,6 +193,7 @@ class Model(dict, metaclass=ModelMetaclass):
         rs = await select(' '.join(sql), args)
         return [cls(**r) for r in rs]
 
+
     @classmethod
     async def findNumber(cls, selectField, where=None, args=None):
         ' find number by select and where. '
@@ -200,6 +206,7 @@ class Model(dict, metaclass=ModelMetaclass):
             return None
         return rs[0]['_num_']
 
+    # 使用主键查询
     @classmethod
     async def find(cls, pk):
         ' find object by primary key. '
@@ -208,6 +215,7 @@ class Model(dict, metaclass=ModelMetaclass):
             return None
         return cls(**rs[0])
 
+    # 保存
     async def save(self):
         args = list(map(self.getValueOrDefault, self.__fields__))
         args.append(self.getValueOrDefault(self.__primary_key__))
@@ -215,6 +223,7 @@ class Model(dict, metaclass=ModelMetaclass):
         if rows != 1:
             logging.warn('failed to insert record: affected rows: %s' % rows)
 
+    # 更新
     async def update(self):
         args = list(map(self.getValue, self.__fields__))
         args.append(self.getValue(self.__primary_key__))
@@ -222,6 +231,7 @@ class Model(dict, metaclass=ModelMetaclass):
         if rows != 1:
             logging.warn('failed to update by primary key: affected rows: %s' % rows)
 
+    # 删除
     async def remove(self):
         args = [self.getValue(self.__primary_key__)]
         rows = await execute(self.__delete__, args)
